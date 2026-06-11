@@ -95,6 +95,16 @@
   }
   .base{padding:6px 20px 0;font-size:12px;color:#C7D6E2;letter-spacing:.04em;text-transform:uppercase}
   .base b{color:#FFD23F;font-family:var(--mono)}
+  /* player photo on the deck */
+  .player-photo{display:flex;justify-content:center;padding:12px 20px 0}
+  .player-photo img{width:122px;height:122px;border-radius:50%;object-fit:cover;border:3px solid #FFD23F;box-shadow:0 6px 20px rgba(0,0,0,.45);background:#0d1117}
+  /* photo controls in the players table */
+  .pphoto-cell{white-space:nowrap}
+  .pphoto-add{font-size:11px;padding:6px 10px;border-radius:8px;border:1px dashed var(--line);background:var(--panel-2);color:var(--muted);cursor:pointer}
+  .pphoto-add:hover{border-color:#9FC4DF;color:var(--bone)}
+  .pphoto-wrap{position:relative;display:inline-block}
+  .pphoto-thumb{width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid var(--line);cursor:pointer;display:block}
+  .pphoto-rm{position:absolute;top:-7px;right:-7px;width:18px;height:18px;border-radius:50%;border:none;background:var(--sold);color:#fff;font-size:13px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 
   .bid-stage{margin-top:auto;padding:22px 20px;text-align:center;border-top:1px solid var(--line)}
   .bid-label{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#A9BECE}
@@ -587,7 +597,7 @@
         <div class="section-title">Player pool <span id="poolCount" style="color:var(--bone);font-family:var(--mono)"></span></div>
         <div class="plist">
           <table class="ptable">
-            <thead><tr><th>Player</th><th>Category</th><th>Base</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Player</th><th>Photo</th><th>Category</th><th>Base</th><th>Status</th><th></th></tr></thead>
             <tbody id="poolBody"></tbody>
           </table>
         </div>
@@ -598,6 +608,7 @@
 </div>
 
 <div id="toast"></div>
+<input type="file" id="photoFile" accept="image/*" style="display:none" />
 
 <script>
 "use strict";
@@ -773,6 +784,7 @@ function renderBlock(){
       <span class="cat-badge">${c?c.name:"—"}</span>
       <div class="player-meta">${p.role?p.role+"<br>":""}Base ${fmt(p.basePrice)}</div>
     </div>
+    ${p.photo?`<div class="player-photo"><img src="${p.photo}" alt="${escapeAttr(p.name)}" /></div>`:""}
     <div class="player-name">${escapeHTML(p.name)}</div>
     <div class="base">Base price <b>${fmt(p.basePrice)}</b></div>
     <div class="bid-stage">
@@ -960,6 +972,11 @@ function renderPool(){
         <input class="pedit pname-in" data-pedit-name="${p.id}" value="${escapeAttr(p.name)}" aria-label="Player name" />
         <input class="pedit prole-in" data-pedit-role="${p.id}" value="${escapeAttr(p.role||'')}" placeholder="role / note" aria-label="Role or note" />
       </td>
+      <td class="pphoto-cell">
+        ${p.photo
+          ? `<span class="pphoto-wrap"><img class="pphoto-thumb" src="${p.photo}" data-pphoto="${p.id}" title="Change photo" alt="" /><button class="pphoto-rm" data-pphoto-rm="${p.id}" title="Remove photo">&times;</button></span>`
+          : `<button class="pphoto-add" data-pphoto="${p.id}">+ photo</button>`}
+      </td>
       <td>
         <select class="pedit pcat-in" data-pedit-cat="${p.id}" aria-label="Category">
           ${state.categories.map(cc=>`<option value="${cc.id}"${cc.id===p.category?" selected":""}>${escapeHTML(cc.name)}</option>`).join("")}
@@ -1070,7 +1087,8 @@ function markSold(){
   t.purse -= l.currentBid;
   t.players.push(p.id);
   p.status="sold"; p.soldTo=t.id; p.soldPrice=l.currentBid;
-  state.result = { type:"sold", playerId:p.id, teamId:t.id, price:l.currentBid };
+  state.result = { type:"sold", playerId:p.id, teamId:t.id, price:l.currentBid,
+                   prevBid:l.currentBid, prevBidder:t.id, prevInc:(l.increment||state.event.defaultIncrement) };
   state.live = { playerId:null,currentBid:0,bidderTeamId:null,increment:state.event.defaultIncrement };
   pending={};
   save(); renderAll();
@@ -1081,7 +1099,8 @@ function markUnsold(){
   if(!l.playerId) return;
   const p=player(l.playerId);
   p.status="unsold"; p.soldTo=null; p.soldPrice=null;
-  state.result = { type:"unsold", playerId:p.id };
+  state.result = { type:"unsold", playerId:p.id,
+                   prevBid:l.currentBid, prevBidder:l.bidderTeamId||null, prevInc:(l.increment||state.event.defaultIncrement) };
   state.live = { playerId:null,currentBid:0,bidderTeamId:null,increment:state.event.defaultIncrement };
   pending={};
   save(); renderAll();
@@ -1097,10 +1116,13 @@ function undoResult(){
     if(t){ t.purse += r.price; t.players = t.players.filter(id=>id!==p.id); }
   }
   p.status="available"; p.soldTo=null; p.soldPrice=null;
+  const restoreBid = (r.prevBid!=null) ? r.prevBid : p.basePrice;
+  const restoreBidder = r.prevBidder || null;
   state.result=null; pending={};
-  state.live = { playerId:p.id, currentBid:p.basePrice, bidderTeamId:null, increment:state.event.defaultIncrement };
+  state.live = { playerId:p.id, currentBid:restoreBid, bidderTeamId:restoreBidder,
+                 increment:(r.prevInc||state.event.defaultIncrement) };
   save(); renderAll();
-  toast(r.type==="sold" ? "Sale undone — "+p.name+" is back on the block" : p.name+" is back on the block");
+  toast(r.type==="sold" ? "Sale undone — "+p.name+" back on the block at "+fmt(restoreBid) : p.name+" is back on the block");
 }
 function showStamp(text,unsold){
   const s=$("#stamp"); if(!s) return;
@@ -1230,8 +1252,12 @@ $("#btnBulk").addEventListener("click",()=>{
   toast(added+" player"+(added!==1?"s":"")+" added.");
 });
 
-// remove player
+// remove player  (+ photo add/change/remove)
 $("#poolBody").addEventListener("click",e=>{
+  const rm=e.target.closest("[data-pphoto-rm]");
+  if(rm){ const p=player(rm.dataset.pphotoRm); if(p){ delete p.photo; save(); renderPool(); renderFloor(); } return; }
+  const ph=e.target.closest("[data-pphoto]");
+  if(ph){ photoTargetId=ph.dataset.pphoto; $("#photoFile").value=""; $("#photoFile").click(); return; }
   const x=e.target.closest("[data-del]"); if(!x) return;
   const p=player(x.dataset.del);
   if(p.status==="sold"){
@@ -1241,6 +1267,36 @@ $("#poolBody").addEventListener("click",e=>{
   state.players=state.players.filter(pl=>pl.id!==p.id);
   if(state.live.playerId===p.id) state.live={playerId:null,currentBid:0,bidderTeamId:null,increment:state.event.defaultIncrement};
   save(); renderAll();
+});
+
+// player photo: read, downscale to keep it light, store as data URI on the player
+let photoTargetId=null;
+function downscaleImage(file, maxDim, cb){
+  const fr=new FileReader();
+  fr.onload=()=>{
+    const img=new Image();
+    img.onload=()=>{
+      let w=img.width, h=img.height;
+      const s=Math.min(1, maxDim/Math.max(w,h));
+      w=Math.max(1,Math.round(w*s)); h=Math.max(1,Math.round(h*s));
+      const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+      cv.getContext("2d").drawImage(img,0,0,w,h);
+      cb(cv.toDataURL("image/jpeg",0.72));
+    };
+    img.onerror=()=>toast("Couldn't read that image.",true);
+    img.src=fr.result;
+  };
+  fr.onerror=()=>toast("Couldn't read that file.",true);
+  fr.readAsDataURL(file);
+}
+$("#photoFile").addEventListener("change",e=>{
+  const file=e.target.files&&e.target.files[0];
+  if(!file||!photoTargetId) return;
+  downscaleImage(file, 360, dataUrl=>{
+    const p=player(photoTargetId);
+    if(p){ p.photo=dataUrl; save(); renderPool(); renderFloor(); toast("Photo added to "+p.name+"."); }
+    photoTargetId=null;
+  });
 });
 
 // edit player fields inline (keeps focus while typing)
@@ -1305,6 +1361,24 @@ $("#adminLogout").addEventListener("click",()=>{
 /* ---------------- go ---------------- */
 if(COLLAGE) $("#bgPoster").style.backgroundImage = `url('${COLLAGE}')`;
 /* ===================== ROLE-AWARE RENDER ===================== */
+// Re-renders rebuild inputs; if the admin is typing in a field when a remote
+// update arrives, keep their focus and caret so values like the category cap
+// don't get wiped mid-edit.
+function withFocusPreserved(fn){
+  const a=document.activeElement;
+  let sel=null, ss=null, se=null;
+  if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){
+    if(a.id){ sel="#"+a.id; }
+    else { for(const at of a.attributes){ if(at.name.indexOf("data-")===0){ sel="["+at.name+'="'+(window.CSS&&CSS.escape?CSS.escape(at.value):at.value)+'"]'; break; } } }
+    try{ ss=a.selectionStart; se=a.selectionEnd; }catch(_){}
+  }
+  fn();
+  if(sel){
+    const el=document.querySelector(sel);
+    if(el){ try{ el.focus({preventScroll:true}); }catch(_){ el.focus(); }
+      if(ss!=null){ try{ el.setSelectionRange(ss,se); }catch(_){} } }
+  }
+}
 function renderActive(){
   if(!state) return;
   if(role==='team') renderTeamView();
@@ -1352,6 +1426,7 @@ function renderTeamView(){
       <span class="cat-badge">${c?c.name:"—"}</span>
       <div class="player-meta">${p.role?escapeHTML(p.role)+"<br>":""}Base ${fmt(p.basePrice)}</div>
     </div>
+    ${p.photo?`<div class="player-photo"><img src="${p.photo}" alt="${escapeAttr(p.name)}" /></div>`:""}
     <div class="player-name">${escapeHTML(p.name)}</div>
     <div class="bid-stage">
       <div class="bid-label">Current bid</div>
@@ -1452,7 +1527,7 @@ function subscribe(){
     state = attachPosters(ensureShape(val));
     populateTeamPicker();
     $("#gateStatus").textContent="Connected"; $("#gateStatus").className="gatestatus ok";
-    renderActive();
+    withFocusPreserved(renderActive);
   }, err=>{
     $("#gateStatus").textContent="Connection error: "+err.message; $("#gateStatus").className="gatestatus err";
   });
