@@ -571,6 +571,14 @@
             <textarea id="bulk" rows="4" style="width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--bone);padding:10px 12px;border-radius:9px;font-family:var(--mono);font-size:12px;resize:vertical" placeholder="A. Sharma, Batsmen, 200&#10;R. Khan, Bowlers, 150"></textarea>
           </div>
           <button class="ghostbtn" id="btnBulk">Add all from list</button>
+
+          <div class="field" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line)">
+            <label>Import from CSV file</label>
+            <p class="hint" style="margin:2px 0 10px">Columns (with a header row): <b>Name, Role, Base price, role/note, photo url</b>. <b>Role</b> sets the category (matched to your categories, or created if new). <b>photo url</b> is optional.</p>
+            <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none" />
+            <button class="ghostbtn" id="btnCsv">Choose CSV &amp; import</button>
+            <span id="csvStatus" class="hint" style="margin-left:10px"></span>
+          </div>
         </div>
 
         <div class="panel pad" style="margin-top:20px">
@@ -1237,6 +1245,103 @@ $("#btnBulk").addEventListener("click",()=>{
   $("#bulk").value="";
   save(); renderAll();
   toast(added+" player"+(added!==1?"s":"")+" added.");
+});
+
+// ---- CSV import ----
+// Minimal RFC-4180-ish parser: handles quoted fields, embedded commas/newlines, "" escapes.
+function parseCSV(text){
+  text = text.replace(/^\uFEFF/, "");            // strip BOM
+  const rows=[]; let row=[]; let field=""; let i=0; let inQ=false;
+  while(i<text.length){
+    const ch=text[i];
+    if(inQ){
+      if(ch==='"'){ if(text[i+1]==='"'){ field+='"'; i+=2; continue; } inQ=false; i++; continue; }
+      field+=ch; i++; continue;
+    }
+    if(ch==='"'){ inQ=true; i++; continue; }
+    if(ch===','){ row.push(field); field=""; i++; continue; }
+    if(ch==='\r'){ i++; continue; }
+    if(ch==='\n'){ row.push(field); rows.push(row); row=[]; field=""; i++; continue; }
+    field+=ch; i++;
+  }
+  row.push(field); rows.push(row);
+  return rows.filter(r=>r.some(c=>String(c).trim()!==""));  // drop blank lines
+}
+// Normalise a category name for tolerant matching (case/space/hyphen/trailing-s).
+function normCat(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"").replace(/s$/,""); }
+function findOrCreateCategory(name){
+  const want=normCat(name);
+  let c=state.categories.find(x=>normCat(x.name)===want);
+  if(c) return c.id;
+  if(!String(name||"").trim()) return state.categories[0].id;   // blank -> first category
+  c={id:uid(), name:String(name).trim(), limit:0};
+  state.categories.push(c);
+  return c.id;
+}
+function importPlayersFromCSV(text){
+  const rows=parseCSV(text);
+  if(!rows.length) return {added:0,newCats:0};
+  // Decide if first row is a header.
+  const first=rows[0].map(s=>String(s).toLowerCase());
+  const headerish=first.some(h=>/name|role|base|price|photo|note|categ/.test(h));
+  let idx={name:0,category:1,base:2,note:3,photo:4};   // positional default
+  let start=0;
+  if(headerish){
+    start=1;
+    idx={name:-1,category:-1,base:-1,note:-1,photo:-1};
+    first.forEach((h,k)=>{
+      h=h.trim();
+      if(idx.name<0 && h.includes("name")) idx.name=k;
+      else if(idx.note<0 && h.includes("note")) idx.note=k;          // "role/note" -> note
+      else if(idx.base<0 && (h.includes("base")||h.includes("price"))) idx.base=k;
+      else if(idx.photo<0 && (h.includes("photo")||h.includes("image")||h.includes("url")||h.includes("pic"))) idx.photo=k;
+      else if(idx.category<0 && (h.includes("categ")||h.includes("role")||h.includes("type")||h.includes("group"))) idx.category=k;
+    });
+    if(idx.name<0) idx.name=0;   // fall back to first column for name
+  }
+  const before=state.categories.length;
+  let added=0;
+  for(let r=start;r<rows.length;r++){
+    const row=rows[r];
+    const get=k=> (k>=0 && k<row.length) ? String(row[k]).trim() : "";
+    const name=get(idx.name);
+    if(!name) continue;
+    const catId=findOrCreateCategory(get(idx.category));
+    const base=Math.max(0, Number(String(get(idx.base)).replace(/[^0-9.\-]/g,""))||0);
+    const note=get(idx.note);
+    const photo=get(idx.photo);
+    const p={ id:uid(), name, category:catId, basePrice:base, role:note,
+              status:"available", soldTo:null, soldPrice:null };
+    if(photo) p.photo=photo;     // remote URL works directly as an <img> source
+    state.players.push(p);
+    added++;
+  }
+  return {added, newCats: state.categories.length-before};
+}
+$("#btnCsv").addEventListener("click",()=>$("#csvFile").click());
+$("#csvFile").addEventListener("change",e=>{
+  const file=e.target.files&&e.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const existing=state.players.length;
+      if(existing && !confirm("Add the players from this CSV to the "+existing+" already in your pool?\n\n(To replace instead, use Reset event or Reset database first.)")){
+        $("#csvFile").value=""; return;
+      }
+      const {added,newCats}=importPlayersFromCSV(String(reader.result));
+      save(); renderAll();
+      const extra = newCats ? " ("+newCats+" new categor"+(newCats===1?"y":"ies")+" created)" : "";
+      $("#csvStatus").textContent = added+" player"+(added!==1?"s":"")+" imported"+extra+".";
+      toast(added+" player"+(added!==1?"s":"")+" imported from CSV"+extra+".");
+    }catch(err){
+      $("#csvStatus").textContent = "Couldn't read that CSV.";
+      toast("CSV import failed: "+err.message, true);
+    }
+    $("#csvFile").value="";
+  };
+  reader.onerror=()=>{ toast("Couldn't read that file.",true); };
+  reader.readAsText(file);
 });
 
 // remove player  (+ photo add/change/remove)
