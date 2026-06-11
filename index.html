@@ -481,6 +481,7 @@
       <button id="btnExport">Export backup</button>
       <button id="btnImport">Import backup</button>
       <button id="btnReset" class="danger">Reset event</button>
+      <button id="btnWipe" class="danger">Reset database</button>
       <input type="file" id="fileImport" accept="application/json" style="display:none" />
     </div>
   </header>
@@ -702,24 +703,10 @@ function freshState(){
     code:TEAM_NAMES[i].split(' ').pop().toLowerCase(),
     purse:10000, players:[]
   }));
-  // seed a few sample players so the floor isn't empty on first open
-  // [name, categoryIndex, basePrice, role]  — cats: 0 Marquee,1 Batters,2 Bowlers,3 All-rounders,4 Wicket-keepers,5 Uncapped
-  const sample = [
-    ["AZM Jhony",0,500,""],
-    ["Zahid Ahmed",0,500,""],
-    ["Ari Adnan",3,200,""],
-    ["Hasan Abdullah",3,200,""],
-    ["Ishtiaque Ahmed",4,200,""],
-    ["Khaled Ahmed",2,200,""],
-    ["Nipu Ahmed",3,200,""],
-    ["Mr x",5,50,""],
-    ["Mr Y",5,50,""],
-    ["Mr Z",5,50,""],
-  ];
-  const players = sample.map(([name,ci,base,role])=>({
-    id:uid(), name, category:cats[ci].id, basePrice:base, role,
-    status:"available", soldTo:null, soldPrice:null
-  }));
+  // Start with an empty player pool. Players you add are saved to the shared
+  // database and load automatically on every device — they are never replaced
+  // by examples, so you only enter them once.
+  const players = [];
   return {
     event:{ name:"Jamia Internal Cricket Tournament (JICT)", startingPurse:10000, defaultIncrement:100 },
     categories:cats, teams, players,
@@ -1343,14 +1330,30 @@ $("#fileImport").addEventListener("change",e=>{
   }catch(err){ toast("That file doesn't look like an auction backup.",true); } };
   r.readAsText(f); e.target.value="";
 });
+// Reset event: keep players, teams and categories; just clear the auction so you
+// can run it again — every player back in the pool, all sales/bids cleared,
+// purses restored to the starting amount.
+function resetEvent(){
+  state.players.forEach(p=>{ p.status="available"; p.soldTo=null; p.soldPrice=null; });
+  state.teams.forEach(t=>{ t.players=[]; t.purse=state.event.startingPurse; });
+  state.live = { playerId:null, currentBid:0, bidderTeamId:null, increment:state.event.defaultIncrement };
+  state.result = null;
+  pending={};
+  save(); renderAll();
+}
 $("#btnReset").addEventListener("click",()=>{
-  if(!confirm("Reset everything — wipe ALL data from the shared database (every team, player, bid and sale on every device) and start a fresh event? This cannot be undone. Export a backup first if unsure.")) return;
+  if(!confirm("Reset the auction? Every player goes back in the pool, all sales and bids are cleared, and team purses are restored to "+fmt(state.event.startingPurse)+". Your players, teams and categories are kept. This cannot be undone.")) return;
+  resetEvent();
+  toast("Auction reset — players are back in the pool.");
+});
+$("#btnWipe").addEventListener("click",()=>{
+  if(!confirm("Reset the WHOLE database? This wipes ALL data on every device — every player, team, bid and sale — and starts a blank event with no players. This cannot be undone. Export a backup first if unsure.")) return;
   if(ONLINE && roomRef){
     roomRef.remove()
-      .then(()=>{ state=freshState(); save(); renderAll(); toast("Database wiped — fresh event ready."); })
+      .then(()=>{ state=freshState(); save(); renderAll(); toast("Database wiped — blank event ready."); })
       .catch(e=>toast("Couldn't clear database: "+e.message,true));
   } else {
-    state=freshState(); save(); renderAll(); toast("Fresh event ready.");
+    state=freshState(); save(); renderAll(); toast("Blank event ready.");
   }
 });
 $("#adminLogout").addEventListener("click",()=>{
