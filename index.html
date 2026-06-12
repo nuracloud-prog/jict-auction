@@ -379,6 +379,28 @@
   .tvinfo{display:flex;justify-content:space-around;text-align:center}
   .tvinfo .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
   .tvinfo .v{font-family:var(--mono);font-size:20px;color:var(--gold);margin-top:3px}
+  /* team-view tabs + player browser */
+  .tvtabs{display:flex;gap:8px;margin-bottom:16px}
+  .tvtab{flex:1;padding:11px 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--muted);font-weight:700;font-size:14px;cursor:pointer}
+  .tvtab.active{color:var(--bone);border-color:#9FC4DF;box-shadow:inset 0 0 0 1px #9FC4DF}
+  .tvsearchwrap{margin-bottom:12px}
+  #tvSearch{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--bone);padding:12px 14px;border-radius:10px;font-size:15px}
+  #tvSearch::placeholder{color:var(--muted)}
+  .tvgrp{margin-bottom:18px}
+  .tvgrp-h{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 2px 8px;display:flex;align-items:center;gap:8px}
+  .tvgrp-h span{background:var(--panel-2);border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:1px 8px;font-size:11px;letter-spacing:.06em}
+  .pcard{display:flex;gap:12px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+  .pc-photo{flex:none;width:52px;height:52px;border-radius:50%;overflow:hidden;background:var(--panel-2);border:2px solid var(--line);display:flex;align-items:center;justify-content:center}
+  .pc-photo img{width:100%;height:100%;object-fit:cover;display:block}
+  .pc-noimg{font-weight:800;color:var(--muted);font-size:16px}
+  .pc-main{flex:1;min-width:0}
+  .pc-name{font-weight:800;font-size:15px;color:var(--bone);line-height:1.2}
+  .pc-meta{font-size:12px;color:var(--muted);margin-top:2px}
+  .pc-status{margin-top:5px}
+  .pill{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:2px 9px;border-radius:20px}
+  .pill.avail{color:var(--go);box-shadow:inset 0 0 0 1px var(--go)}
+  .pill.sold{color:#fff;background:var(--tc,var(--sold))}
+  .tvempty{text-align:center;color:var(--muted);padding:30px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
 
   @media (prefers-reduced-motion: reduce){
     .stamp.show{animation:none;opacity:1;transform:translate(-50%,-50%) rotate(-14deg) scale(1)}
@@ -460,11 +482,18 @@
     <div class="tvteam" id="tvTeam"></div>
     <button class="ghostbtn" id="tvLeave">Leave</button>
   </header>
-  <div class="tvwrap">
-    <div class="panel block" id="tvBlock"></div>
-    <div id="tvControl"></div>
-    <div class="panel pad tvinfo" id="tvInfo"></div>
+  <div class="tvtabs">
+    <button class="tvtab active" data-tvtab="live">Live auction</button>
+    <button class="tvtab" data-tvtab="players">All players</button>
   </div>
+  <div id="tvLive">
+    <div class="tvwrap">
+      <div class="panel block" id="tvBlock"></div>
+      <div id="tvControl"></div>
+      <div class="panel pad tvinfo" id="tvInfo"></div>
+    </div>
+  </div>
+  <div id="tvPlayers" style="display:none"></div>
 </div>
 
 <div class="wrap" id="adminApp">
@@ -680,9 +709,19 @@ function ensureShape(s){
   return s;
 }
 
-function save(){
+function save(opts){
   ensureShape(state);
-  if(ONLINE && roomRef){ roomRef.set(toDB(state)).catch(e=>toast("Sync failed: "+e.message,true)); }
+  const force = opts && opts.force;
+  if(ONLINE && roomRef){
+    // Safety net: if the database is known to hold players and we're about to
+    // write a state with none, block it unless this is an explicit wipe. This
+    // stops any stray code path or load-time race from deleting everyone.
+    if(!force && dbHasData && (!state.players || state.players.length===0)){
+      toast("Save blocked: refusing to overwrite saved players with an empty list. Use Reset database if you really want to clear it.", true);
+      return;
+    }
+    roomRef.set(toDB(state)).catch(e=>toast("Sync failed: "+e.message,true));
+  }
   else { localSave(); }
 }
 
@@ -746,7 +785,11 @@ function nextBid(){
 }
 // per-team override amounts (for custom / jump bids); reset whenever the live player changes
 let pending = {};
+let dbHasData = false;   // true once a real (non-empty) DB snapshot has loaded
 let tvPending = null;   // team-view's own pending bid amount
+let tvTab = 'live';     // 'live' | 'players'
+let tvSearch = '';
+let tvPlayersSig = null;
 function targetFor(tid){ return pending[tid]!=null ? pending[tid] : nextBid(); }
 function adjustPending(tid,dir){
   const step=Number(state.live.increment||state.event.defaultIncrement);
@@ -1455,10 +1498,10 @@ $("#btnWipe").addEventListener("click",()=>{
   if(!confirm("Reset the WHOLE database? This wipes ALL data on every device — every player, team, bid and sale — and starts a blank event with no players. This cannot be undone. Export a backup first if unsure.")) return;
   if(ONLINE && roomRef){
     roomRef.remove()
-      .then(()=>{ state=freshState(); save(); renderAll(); toast("Database wiped — blank event ready."); })
+      .then(()=>{ dbHasData=false; state=freshState(); save({force:true}); renderAll(); toast("Database wiped — blank event ready."); })
       .catch(e=>toast("Couldn't clear database: "+e.message,true));
   } else {
-    state=freshState(); save(); renderAll(); toast("Blank event ready.");
+    state=freshState(); save({force:true}); renderAll(); toast("Blank event ready.");
   }
 });
 $("#adminLogout").addEventListener("click",()=>{
@@ -1500,6 +1543,7 @@ function renderTeamView(){
   $("#tvEvent").textContent = state.event.name;
   $("#tvTeam").textContent = t.name;
   $("#tvTeam").style.color = t.color;
+  if(tvTab==='players') renderTvPlayers();
 
   const l = state.live;
   const blockEl = $("#tvBlock");
@@ -1584,6 +1628,69 @@ $("#tvControl").addEventListener("click",e=>{
 });
 $("#tvLeave").addEventListener("click", leaveToGate);
 
+/* ---- team-view player browser (prepare before the auction) ---- */
+function tvInitials(name){
+  const parts=String(name||"").trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return "?";
+  return (parts[0][0]+(parts.length>1?parts[parts.length-1][0]:"")).toUpperCase();
+}
+function tvPlayerCard(p){
+  const sold = p.status==='sold';
+  const st = sold ? team(p.soldTo) : null;
+  const pill = sold
+    ? `<span class="pill sold" style="--tc:${st?st.color:'var(--sold)'}">Sold · ${st?escapeHTML(st.name):'—'} · ${fmt(p.soldPrice)}</span>`
+    : `<span class="pill avail">Available</span>`;
+  return `<div class="pcard">
+    <div class="pc-photo">${p.photo?`<img src="${p.photo}" alt="${escapeAttr(p.name)}" loading="lazy"/>`:`<span class="pc-noimg">${escapeHTML(tvInitials(p.name))}</span>`}</div>
+    <div class="pc-main">
+      <div class="pc-name">${escapeHTML(p.name)}</div>
+      <div class="pc-meta">Base ${fmt(p.basePrice)}${p.role?` · ${escapeHTML(p.role)}`:''}</div>
+      <div class="pc-status">${pill}</div>
+    </div>
+  </div>`;
+}
+function renderTvPlayers(force){
+  const host=$("#tvPlayers"); if(!host || !state) return;
+  const q=(tvSearch||"").trim().toLowerCase();
+  // signature avoids needless re-render (and photo reloads) on every live bid
+  const sig = q+"|"+state.players.map(p=>p.id+p.status+(p.soldTo||"")+(p.photo?1:0)+p.name+p.basePrice+(p.role||"")+p.category).join("~")
+              +"|"+state.categories.map(c=>c.id+c.name).join("~");
+  if(!force && sig===tvPlayersSig) return;
+  tvPlayersSig=sig;
+
+  const match=p=> !q || (p.name||"").toLowerCase().includes(q) || (p.role||"").toLowerCase().includes(q);
+  const total=state.players.length;
+  let html = `<div class="tvsearchwrap"><input id="tvSearch" placeholder="Search players…" value="${escapeAttr(tvSearch||'')}" autocomplete="off" /></div>`;
+
+  if(total===0){
+    html += `<div class="tvempty">No players have been added yet.<br>Check back once the auctioneer has set up the pool.</div>`;
+    host.innerHTML=html; return;
+  }
+  let shown=0;
+  const known=new Set(state.categories.map(c=>c.id));
+  state.categories.forEach(c=>{
+    const ps=state.players.filter(p=>p.category===c.id && match(p));
+    if(!ps.length) return;
+    shown+=ps.length;
+    html += `<div class="tvgrp"><div class="tvgrp-h">${escapeHTML(c.name)} <span>${ps.length}</span></div>${ps.map(tvPlayerCard).join("")}</div>`;
+  });
+  const orphans=state.players.filter(p=>!known.has(p.category) && match(p));
+  if(orphans.length){ shown+=orphans.length; html += `<div class="tvgrp"><div class="tvgrp-h">Other <span>${orphans.length}</span></div>${orphans.map(tvPlayerCard).join("")}</div>`; }
+  if(!shown){ html += `<div class="tvempty">No players match “${escapeHTML(q)}”.</div>`; }
+  host.innerHTML=html;
+}
+function tvSetTab(tab){
+  tvTab=tab;
+  $("#tvLive").style.display = tab==='live' ? '' : 'none';
+  $("#tvPlayers").style.display = tab==='players' ? '' : 'none';
+  document.querySelectorAll('.tvtab').forEach(b=>b.classList.toggle('active', b.dataset.tvtab===tab));
+  if(tab==='players') renderTvPlayers(true);
+}
+document.querySelectorAll('.tvtab').forEach(b=>b.addEventListener('click',()=>tvSetTab(b.dataset.tvtab)));
+$("#tvPlayers").addEventListener("input",e=>{
+  if(e.target.id==="tvSearch"){ tvSearch=e.target.value; withFocusPreserved(()=>renderTvPlayers(true)); }
+});
+
 /* ===================== GATE ===================== */
 function show(which){
   $("#gate").style.display    = which==='gate' ? 'flex' : 'none';
@@ -1593,7 +1700,7 @@ function show(which){
 }
 function rememberRole(r,tid){ try{ localStorage.setItem("jict_role", JSON.stringify({r,tid})); }catch(e){} }
 function forgetRole(){ try{ localStorage.removeItem("jict_role"); }catch(e){} }
-function leaveToGate(){ role=null; myTeamId=null; tvPending=null; forgetRole(); populateTeamPicker(); show('gate'); }
+function leaveToGate(){ role=null; myTeamId=null; tvPending=null; tvTab='live'; tvSearch=''; tvPlayersSig=null; forgetRole(); populateTeamPicker(); show('gate'); }
 
 function populateTeamPicker(){
   const sel=$("#teamPick"); if(!sel) return;
@@ -1603,8 +1710,10 @@ function populateTeamPicker(){
 function enterAdmin(){
   if($("#adminPass").value !== ADMIN_PASSCODE){ gateErr("Wrong admin passcode."); return; }
   role='admin'; myTeamId=null; rememberRole('admin',null);
-  if(!state){ state=freshState(); save(); }
-  show('admin'); renderAll();
+  // Use a local blank only if nothing has loaded yet — never write it to the DB
+  // here, or a login before data arrives would wipe the room.
+  if(!state){ state = attachPosters(ensureShape(freshState())); }
+  show('admin'); renderActive();
 }
 function enterTeam(){
   const tid=$("#teamPick").value;
@@ -1614,7 +1723,8 @@ function enterTeam(){
     gateErr("Wrong code for "+t.name+"."); return;
   }
   role='team'; myTeamId=tid; tvPending=null; rememberRole('team',tid);
-  show('team'); renderTeamView();
+  tvTab='live'; tvSearch=''; tvPlayersSig=null;
+  show('team'); tvSetTab('live'); renderTeamView();
 }
 function gateErr(m){ const h=$("#gateHint"); h.textContent=m; h.classList.add("err"); }
 $("#adminEnter").addEventListener("click", enterAdmin);
@@ -1627,17 +1737,28 @@ function subscribe(){
   roomRef.on('value', snap=>{
     const val = snap.val();
     if(!val){
-      // empty room: only the admin seeds it
-      if(role==='admin'){ state=freshState(); save(); }
-      else { $("#gateStatus").textContent="Connected — waiting for the auctioneer to start the room."; $("#gateStatus").className="gatestatus ok"; }
+      // Empty OR unreadable read (transient reconnect / denied rules).
+      // NEVER write a blank state back — that is what wiped the data before.
+      if(role==='team'){
+        $("#gateStatus").textContent="Connected — waiting for the auctioneer to start the room."; $("#gateStatus").className="gatestatus ok";
+        return;
+      }
+      // Admin (or not-yet-logged-in): keep a local blank to work with so the UI
+      // is usable, but do NOT persist it. If real data already loaded this
+      // session, keep it untouched (don't clobber it on a momentary null).
+      if(!state){ state = attachPosters(ensureShape(freshState())); }
+      $("#gateStatus").textContent="Connected — empty room"; $("#gateStatus").className="gatestatus ok";
+      withFocusPreserved(renderActive);
       return;
     }
+    dbHasData = true;
     state = attachPosters(ensureShape(val));
     populateTeamPicker();
     $("#gateStatus").textContent="Connected"; $("#gateStatus").className="gatestatus ok";
     withFocusPreserved(renderActive);
   }, err=>{
-    $("#gateStatus").textContent="Connection error: "+err.message; $("#gateStatus").className="gatestatus err";
+    // Read failed (e.g. expired/denied database rules). Do NOT wipe anything.
+    $("#gateStatus").textContent="Connection error: "+err.message+" — your data is safe; check the database rules."; $("#gateStatus").className="gatestatus err";
   });
 }
 
@@ -1657,7 +1778,7 @@ function boot(){
     let saved=null; try{ saved=JSON.parse(localStorage.getItem("jict_role")||"null"); }catch(e){}
     if(saved){
       const iv=setInterval(()=>{
-        if(saved.r==='admin'){ clearInterval(iv); role='admin'; if(!state){state=freshState();save();} show('admin'); renderAll(); }
+        if(saved.r==='admin'){ clearInterval(iv); role='admin'; if(!state){ state = attachPosters(ensureShape(freshState())); } show('admin'); renderActive(); }
         else if(state && state.teams.find(t=>t.id===saved.tid)){ clearInterval(iv); role='team'; myTeamId=saved.tid; show('team'); renderTeamView(); }
       },250);
       setTimeout(()=>clearInterval(iv),8000);
