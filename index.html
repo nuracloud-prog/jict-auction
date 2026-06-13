@@ -1299,14 +1299,16 @@ $("#teamGrid").addEventListener("click",e=>{
 });
 
 // category name edits — propagate the new name everywhere a player's category shows
-$("#catEditor").addEventListener("input",e=>{
+$("#catEditor").addEventListener("change",e=>{
   const lim=e.target.closest("[data-cat-lim]");
   if(lim){ const c=cat(lim.dataset.catLim); if(c){ c.limit=Math.max(0,Math.floor(Number(lim.value)||0)); save(); renderFloor(); } return; }
-  const inp=e.target.closest("[data-cat-name]"); if(!inp) return;
-  cat(inp.dataset.catName).name=inp.value; save();
-  renderCatSelect();   // the "add player" dropdown
-  renderFloor();       // block badge, queue, filter chips
-  renderPool();        // each player's category dropdown in the pool table
+  const inp=e.target.closest("[data-cat-name]");
+  if(inp){ const c=cat(inp.dataset.catName); if(c){ c.name=inp.value.trim()||c.name; save();
+    renderCatSelect();   // the "add player" dropdown
+    renderFloor();       // block badge, queue, filter chips
+    renderPool();        // each player's category dropdown in the pool table
+    renderCatEditor();
+  } return; }
 });
 
 // add player
@@ -1535,22 +1537,23 @@ $("#photoFile").addEventListener("change",e=>{
 });
 
 // edit player fields inline (keeps focus while typing)
-$("#poolBody").addEventListener("input",e=>{
+// Commit inline pool edits when the field is left (blur/Enter), NOT on every
+// keystroke — otherwise each keystroke saves, echoes back from Firebase and
+// rebuilds the row, wiping what you were typing.
+$("#poolBody").addEventListener("change",e=>{
   const n=e.target.closest("[data-pedit-name]");
-  if(n){ const p=player(n.dataset.peditName); if(p){ p.name=n.value; save(); softRefresh(); } return; }
+  if(n){ const p=player(n.dataset.peditName); if(p){ const v=n.value.trim(); if(v){ p.name=v; } save(); renderPool(); } return; }
   const r=e.target.closest("[data-pedit-role]");
   if(r){ const p=player(r.dataset.peditRole); if(p){ p.role=r.value; save(); } return; }
   const b=e.target.closest("[data-pedit-base]");
-  if(b){ const p=player(b.dataset.peditBase); if(p){ p.basePrice=Math.max(0,Number(b.value)||0); save(); } return; }
-});
-$("#poolBody").addEventListener("change",e=>{
+  if(b){ const p=player(b.dataset.peditBase); if(p){ p.basePrice=Math.max(0,Math.floor(Number(b.value)||0)); save(); renderPool(); } return; }
   const c=e.target.closest("[data-pedit-cat]");
-  if(c){ const p=player(c.dataset.peditCat); if(p){ p.category=c.value; save(); softRefresh(); } }
+  if(c){ const p=player(c.dataset.peditCat); if(p){ p.category=c.value; save(); renderPool(); } return; }
 });
 
 // settings
-$("#setPurse").addEventListener("input",e=>{ state.event.startingPurse=Math.max(0,Number(e.target.value)||0); save(); });
-$("#setInc").addEventListener("input",e=>{ state.event.defaultIncrement=Math.max(1,Number(e.target.value)||1); save(); });
+$("#setPurse").addEventListener("change",e=>{ state.event.startingPurse=Math.max(0,Number(e.target.value)||0); save(); });
+$("#setInc").addEventListener("change",e=>{ state.event.defaultIncrement=Math.max(1,Number(e.target.value)||1); save(); });
 $("#btnApplyPurse").addEventListener("click",()=>{
   if(!confirm("Reset every team's purse to "+fmt(state.event.startingPurse)+"? Players already bought stay assigned but credits are reset.")) return;
   state.teams.forEach(t=>t.purse=state.event.startingPurse);
