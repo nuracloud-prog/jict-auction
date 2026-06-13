@@ -257,6 +257,10 @@
   .plist{margin-top:6px}
   .ptable{width:100%;border-collapse:collapse;font-size:13px}
   .ptable th{text-align:left;color:var(--muted);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:8px 8px;border-bottom:1px solid var(--line)}
+  .ptable th.sorth{cursor:pointer;user-select:none;white-space:nowrap}
+  .ptable th.sorth:hover{color:var(--bone)}
+  .ptable th.sorth.active{color:var(--bone)}
+  .ptable th .arr{font-size:9px}
   .ptable td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
   .ptable tr.sold-row td{opacity:.5}
   .ptable .pp{font-family:var(--mono);color:var(--gold)}
@@ -384,6 +388,9 @@
   .tvtab{flex:1;padding:11px 10px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--muted);font-weight:700;font-size:14px;cursor:pointer}
   .tvtab.active{color:var(--bone);border-color:#9FC4DF;box-shadow:inset 0 0 0 1px #9FC4DF}
   .tvsearchwrap{margin-bottom:12px}
+  .tvtools{display:flex;gap:8px;margin-bottom:14px}
+  .tvtools #tvSearch{flex:1;min-width:0}
+  .tvtools #tvSort{flex:none;background:var(--panel);border:1px solid var(--line);color:var(--bone);border-radius:10px;padding:0 10px;font-size:13px;font-weight:600}
   #tvSearch{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--bone);padding:12px 14px;border-radius:10px;font-size:15px}
   #tvSearch::placeholder{color:var(--muted)}
   .tvgrp{margin-bottom:18px}
@@ -642,7 +649,14 @@
         <div class="section-title">Player pool <span id="poolCount" style="color:var(--bone);font-family:var(--mono)"></span></div>
         <div class="plist">
           <table class="ptable">
-            <thead><tr><th>Player</th><th>Photo</th><th>Category</th><th>Base</th><th>Status</th><th></th></tr></thead>
+            <thead><tr id="poolHead">
+              <th class="sorth" data-sort="name">Player<span class="arr"></span></th>
+              <th>Photo</th>
+              <th class="sorth" data-sort="category">Category<span class="arr"></span></th>
+              <th class="sorth" data-sort="base">Base<span class="arr"></span></th>
+              <th class="sorth" data-sort="status">Status<span class="arr"></span></th>
+              <th></th>
+            </tr></thead>
             <tbody id="poolBody"></tbody>
           </table>
         </div>
@@ -793,6 +807,8 @@ function nextBid(){
 // per-team override amounts (for custom / jump bids); reset whenever the live player changes
 let pending = {};
 let dbHasData = false;   // true once a real (non-empty) DB snapshot has loaded
+let poolSort = { key:'name', dir:1 };   // admin pool table sort
+let tvSort = 'category';                 // team browser sort
 let tvPending = null;   // team-view's own pending bid amount
 let tvTab = 'live';     // 'live' | 'players'
 let tvSearch = '';
@@ -1003,9 +1019,29 @@ function renderCatEditor(){
     </div>`;
   }).join("");
 }
+/* ---- shared player sorting (admin table + team browser) ---- */
+function catIndex(catId){ const i=state.categories.findIndex(c=>c.id===catId); return i<0?999:i; }
+function statusRank(p){ return p.status==='available'?0 : p.status==='unsold'?1 : 2; }
+function comparePlayers(a,b,key){
+  switch(key){
+    case 'category': return catIndex(a.category)-catIndex(b.category) || (a.basePrice-b.basePrice) || a.name.localeCompare(b.name);
+    case 'base':     return (a.basePrice-b.basePrice) || a.name.localeCompare(b.name);
+    case 'status':   return statusRank(a)-statusRank(b) || a.name.localeCompare(b.name);
+    default:         return a.name.localeCompare(b.name);
+  }
+}
+function sortPlayers(list, key, dir){ return [...list].sort((a,b)=> dir*comparePlayers(a,b,key)); }
+function updatePoolSortIndicators(){
+  document.querySelectorAll('#poolHead .sorth').forEach(th=>{
+    const arr=th.querySelector('.arr');
+    if(th.dataset.sort===poolSort.key){ th.classList.add('active'); if(arr) arr.textContent = poolSort.dir>0?' ▲':' ▼'; }
+    else { th.classList.remove('active'); if(arr) arr.textContent=''; }
+  });
+}
+
 function renderPool(){
   const body=$("#poolBody");
-  const sorted=[...state.players].sort((a,b)=>a.name.localeCompare(b.name));
+  const sorted=sortPlayers(state.players, poolSort.key, poolSort.dir);
   body.innerHTML = sorted.map(p=>{
     const c=cat(p.category);
     let st = p.status==="sold"
@@ -1038,6 +1074,7 @@ function renderPool(){
   $("#poolHint").innerHTML = `<b>${avail}</b> available · <b>${sold}</b> sold · <b>${state.players.length-avail-sold}</b> unsold`;
   $("#setPurse").value = state.event.startingPurse;
   $("#setInc").value = state.event.defaultIncrement;
+  updatePoolSortIndicators();
 }
 
 function softRefresh(){
@@ -1444,6 +1481,13 @@ $("#csvFile").addEventListener("change",e=>{
 });
 
 // remove player  (+ photo add/change/remove)
+// click a column header to sort the pool
+$("#poolHead").addEventListener("click",e=>{
+  const th=e.target.closest(".sorth"); if(!th) return;
+  const key=th.dataset.sort;
+  if(poolSort.key===key){ poolSort.dir*=-1; } else { poolSort.key=key; poolSort.dir = (key==='base'? -1 : 1); }
+  renderPool();
+});
 $("#poolBody").addEventListener("click",e=>{
   const rm=e.target.closest("[data-pphoto-rm]");
   if(rm){ const p=player(rm.dataset.pphotoRm); if(p){ delete p.photo; save(); renderPool(); renderFloor(); } return; }
@@ -1690,17 +1734,19 @@ function tvInitials(name){
   if(!parts.length) return "?";
   return (parts[0][0]+(parts.length>1?parts[parts.length-1][0]:"")).toUpperCase();
 }
-function tvPlayerCard(p){
+function tvPlayerCard(p, showCat){
   const sold = p.status==='sold';
   const st = sold ? team(p.soldTo) : null;
   const pill = sold
     ? `<span class="pill sold" style="--tc:${st?st.color:'var(--sold)'}">Sold · ${st?escapeHTML(st.name):'—'} · ${fmt(p.soldPrice)}</span>`
     : `<span class="pill avail">Available</span>`;
+  const cc = showCat ? cat(p.category) : null;
+  const catTag = cc ? `${escapeHTML(cc.name)} · ` : '';
   return `<div class="pcard">
     <div class="pc-photo">${p.photo?`<img src="${p.photo}" alt="${escapeAttr(p.name)}" loading="lazy"/>`:`<span class="pc-noimg">${escapeHTML(tvInitials(p.name))}</span>`}</div>
     <div class="pc-main">
       <div class="pc-name">${escapeHTML(p.name)}</div>
-      <div class="pc-meta">Base ${fmt(p.basePrice)}${p.role?` · ${escapeHTML(p.role)}`:''}</div>
+      <div class="pc-meta">${catTag}Base ${fmt(p.basePrice)}${p.role?` · ${escapeHTML(p.role)}`:''}</div>
       <div class="pc-status">${pill}</div>
     </div>
   </div>`;
@@ -1709,29 +1755,43 @@ function renderTvPlayers(force){
   const host=$("#tvPlayers"); if(!host || !state) return;
   const q=(tvSearch||"").trim().toLowerCase();
   // signature avoids needless re-render (and photo reloads) on every live bid
-  const sig = q+"|"+state.players.map(p=>p.id+p.status+(p.soldTo||"")+(p.photo?1:0)+p.name+p.basePrice+(p.role||"")+p.category).join("~")
+  const sig = q+"|"+tvSort+"|"+state.players.map(p=>p.id+p.status+(p.soldTo||"")+(p.photo?1:0)+p.name+p.basePrice+(p.role||"")+p.category).join("~")
               +"|"+state.categories.map(c=>c.id+c.name).join("~");
   if(!force && sig===tvPlayersSig) return;
   tvPlayersSig=sig;
 
   const match=p=> !q || (p.name||"").toLowerCase().includes(q) || (p.role||"").toLowerCase().includes(q);
   const total=state.players.length;
-  let html = `<div class="tvsearchwrap"><input id="tvSearch" placeholder="Search players…" value="${escapeAttr(tvSearch||'')}" autocomplete="off" /></div>`;
+  const opt=(v,l)=>`<option value="${v}"${tvSort===v?" selected":""}>${l}</option>`;
+  let html = `<div class="tvtools">
+    <input id="tvSearch" placeholder="Search players…" value="${escapeAttr(tvSearch||'')}" autocomplete="off" />
+    <select id="tvSort" aria-label="Sort players">
+      ${opt('category','By tier')}${opt('priceDesc','Price: high → low')}${opt('priceAsc','Price: low → high')}${opt('name','Name: A–Z')}
+    </select>
+  </div>`;
 
   if(total===0){
     html += `<div class="tvempty">No players have been added yet.<br>Check back once the auctioneer has set up the pool.</div>`;
     host.innerHTML=html; return;
   }
   let shown=0;
-  const known=new Set(state.categories.map(c=>c.id));
-  state.categories.forEach(c=>{
-    const ps=state.players.filter(p=>p.category===c.id && match(p));
-    if(!ps.length) return;
-    shown+=ps.length;
-    html += `<div class="tvgrp"><div class="tvgrp-h">${escapeHTML(c.name)} <span>${ps.length}</span></div>${ps.map(tvPlayerCard).join("")}</div>`;
-  });
-  const orphans=state.players.filter(p=>!known.has(p.category) && match(p));
-  if(orphans.length){ shown+=orphans.length; html += `<div class="tvgrp"><div class="tvgrp-h">Other <span>${orphans.length}</span></div>${orphans.map(tvPlayerCard).join("")}</div>`; }
+  if(tvSort==='category'){
+    const known=new Set(state.categories.map(c=>c.id));
+    state.categories.forEach(c=>{
+      const ps=state.players.filter(p=>p.category===c.id && match(p));
+      if(!ps.length) return;
+      shown+=ps.length;
+      html += `<div class="tvgrp"><div class="tvgrp-h">${escapeHTML(c.name)} <span>${ps.length}</span></div>${ps.map(p=>tvPlayerCard(p,false)).join("")}</div>`;
+    });
+    const orphans=state.players.filter(p=>!known.has(p.category) && match(p));
+    if(orphans.length){ shown+=orphans.length; html += `<div class="tvgrp"><div class="tvgrp-h">Other <span>${orphans.length}</span></div>${orphans.map(p=>tvPlayerCard(p,false)).join("")}</div>`; }
+  } else {
+    const key = tvSort==='name' ? 'name' : 'base';
+    const dir = tvSort==='priceAsc' ? 1 : tvSort==='priceDesc' ? -1 : 1;
+    const list=sortPlayers(state.players.filter(match), key, dir);
+    shown=list.length;
+    if(shown) html += `<div class="tvgrp">${list.map(p=>tvPlayerCard(p,true)).join("")}</div>`;
+  }
   if(!shown){ html += `<div class="tvempty">No players match “${escapeHTML(q)}”.</div>`; }
   host.innerHTML=html;
 }
@@ -1745,6 +1805,9 @@ function tvSetTab(tab){
 document.querySelectorAll('.tvtab').forEach(b=>b.addEventListener('click',()=>tvSetTab(b.dataset.tvtab)));
 $("#tvPlayers").addEventListener("input",e=>{
   if(e.target.id==="tvSearch"){ tvSearch=e.target.value; withFocusPreserved(()=>renderTvPlayers(true)); }
+});
+$("#tvPlayers").addEventListener("change",e=>{
+  if(e.target.id==="tvSort"){ tvSort=e.target.value; renderTvPlayers(true); }
 });
 
 /* ===================== GATE ===================== */
