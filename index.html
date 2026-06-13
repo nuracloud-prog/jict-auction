@@ -252,6 +252,12 @@
   .cat-max label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
   .cat-lim-in{width:52px;background:var(--panel-2);border:1px solid var(--line);color:var(--bone);padding:8px 4px;border-radius:8px;font-family:var(--mono);text-align:center}
   .cat-lim-in:focus{outline:none;border-color:var(--gold-dim)}
+  .cat-base{display:flex;align-items:center;gap:5px;flex:none}
+  .cat-base label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .cat-base-in{width:62px;background:var(--panel-2);border:1px solid var(--line);color:var(--bone);padding:8px 4px;border-radius:8px;font-family:var(--mono);text-align:center}
+  .cat-base-in:focus{outline:none;border-color:var(--gold-dim)}
+  .cat-base-apply{flex:none;background:var(--panel);border:1px solid var(--line);color:var(--bone);padding:7px 9px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .cat-base-apply:hover{border-color:#9FC4DF}
   .cat-edit small{color:var(--muted);font-size:11px;font-family:var(--mono);width:22px;text-align:right;flex:none}
 
   .plist{margin-top:6px}
@@ -1015,6 +1021,11 @@ function renderCatEditor(){
         <label>max</label>
         <input class="cat-lim-in" type="number" min="0" data-cat-lim="${c.id}" value="${c.limit||0}" aria-label="Max per team" />
       </span>
+      <span class="cat-base">
+        <label>base</label>
+        <input class="cat-base-in" type="number" min="0" data-cat-base="${c.id}" placeholder="—" aria-label="Base price for ${escapeAttr(c.name)}" />
+        <button class="cat-base-apply" data-cat-base-apply="${c.id}" title="Apply this base price to all ${n} player(s) in ${escapeAttr(c.name)}">Set all</button>
+      </span>
       <small>${n}</small>
     </div>`;
   }).join("");
@@ -1299,6 +1310,20 @@ $("#teamGrid").addEventListener("click",e=>{
 });
 
 // category name edits — propagate the new name everywhere a player's category shows
+$("#catEditor").addEventListener("click",e=>{
+  const ap=e.target.closest("[data-cat-base-apply]"); if(!ap) return;
+  const id=ap.dataset.catBaseApply;
+  const inp=$('[data-cat-base="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');
+  if(!inp || inp.value===""){ toast("Type a base price in the box first.",true); return; }
+  const val=Math.max(0,Math.floor(Number(inp.value)||0));
+  const c=cat(id);
+  const targets=state.players.filter(p=>p.category===id);
+  if(!targets.length){ toast("No players in "+(c?c.name:"this tier")+" yet.",true); return; }
+  if(!confirm("Set the base price to "+fmt(val)+" for all "+targets.length+" player"+(targets.length!==1?"s":"")+" in "+(c?c.name:"this tier")+"? This overwrites their current base prices.")) return;
+  targets.forEach(p=>p.basePrice=val);
+  save(); renderPool();
+  toast("Base "+fmt(val)+" applied to "+targets.length+" player"+(targets.length!==1?"s":"")+" in "+(c?c.name:"tier")+".");
+});
 $("#catEditor").addEventListener("change",e=>{
   const lim=e.target.closest("[data-cat-lim]");
   if(lim){ const c=cat(lim.dataset.catLim); if(c){ c.limit=Math.max(0,Math.floor(Number(lim.value)||0)); save(); renderFloor(); } return; }
